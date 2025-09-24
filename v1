@@ -1,0 +1,141 @@
+// Enter your Google Sheet URL here between the single quotes
+const SHEET_URL = 'https://docs.google.com/spreadsheets/d/12fS4yM_RppH2h-Ka1yIQKRQYhSdz9OojrN_lrd-etEE/edit';
+
+// AI Max query
+const AI_MAX_QUERY = `
+SELECT 
+  ai_max_search_term_ad_combination_view.ad_group, 
+  ai_max_search_term_ad_combination_view.headline, 
+  ai_max_search_term_ad_combination_view.landing_page, 
+  ai_max_search_term_ad_combination_view.resource_name, 
+  ai_max_search_term_ad_combination_view.search_term, 
+  segments.date, 
+  metrics.clicks, 
+  metrics.cost_micros, 
+  metrics.conversions_value, 
+  metrics.conversions, 
+  metrics.impressions 
+FROM ai_max_search_term_ad_combination_view
+WHERE 
+  segments.date DURING LAST_30_DAYS
+`;
+
+// Search Term Analysis query
+const SEARCH_TERM_QUERY = `
+SELECT 
+  search_term_view.ad_group, 
+  search_term_view.search_term, 
+  segments.search_term_match_type, 
+  ad_group.campaign, 
+  metrics.cost_micros, 
+  metrics.clicks, 
+  metrics.impressions, 
+  segments.date, 
+  metrics.conversions_value, 
+  metrics.conversions 
+FROM search_term_view 
+WHERE 
+  segments.date DURING LAST_30_DAYS
+`;
+
+function main() {
+  let spreadsheet = SpreadsheetApp.openByUrl(SHEET_URL);
+  
+  // AI Max tab
+  let aiMaxSheet = getOrCreateSheet(spreadsheet, "AI Max");
+  let aiMaxQuery = AdsApp.report(AI_MAX_QUERY);
+  aiMaxQuery.exportToSheet(aiMaxSheet);
+  
+  // Convert cost_micros column for AI Max (column 8)
+  convertCostMicros(aiMaxSheet, 8);
+  
+  // Search Term Analysis tab
+  let searchTermSheet = getOrCreateSheet(spreadsheet, "Search Term Analysis");
+  let searchTermQuery = AdsApp.report(SEARCH_TERM_QUERY);
+  searchTermQuery.exportToSheet(searchTermSheet);
+  
+  // Convert cost_micros column for Search Term Analysis (column 5)
+  convertCostMicros(searchTermSheet, 5);
+  
+  // Add analysis formulas for Search Term Analysis
+  addSearchTermAnalysis(searchTermSheet);
+}
+
+function getOrCreateSheet(spreadsheet, sheetName) {
+  let sheet = spreadsheet.getSheetByName(sheetName);
+  if (!sheet) {
+    sheet = spreadsheet.insertSheet(sheetName);
+  } else {
+    sheet.clear();
+  }
+  return sheet;
+}
+
+function convertCostMicros(sheet, costColumn) {
+  let lastRow = sheet.getLastRow();
+  if (lastRow > 1) {
+    let costRange = sheet.getRange(2, costColumn, lastRow - 1, 1);
+    let values = costRange.getValues();
+    
+    for (let i = 0; i < values.length; i++) {
+      values[i][0] = values[i][0] / 1000000; // Convert micros to currency
+    }
+    
+    costRange.setValues(values);
+  }
+}
+
+function addSearchTermAnalysis(sheet) {
+  let lastRow = sheet.getLastRow();
+  let lastCol = sheet.getLastColumn();
+  
+  if (lastRow > 1) {
+    // Add analysis column headers  
+    let headers = ["Query Length (N-gram)", "Word Count Analysis", "Match Type Count", "Overlap Check"];
+    sheet.getRange(1, lastCol + 1, 1, headers.length).setValues([headers]);
+    sheet.getRange(1, lastCol + 1, 1, headers.length).setFontWeight('bold');
+    
+    // Add formulas for all rows at once
+    let startRow = 2;
+    let numRows = lastRow - 1;
+    
+    if (numRows > 0) {
+      // Query length formula using your exact formula: =(LEN(A1)-LEN(SUBSTITUTE(A1," ","")))+1
+      // Search term is in column B = 2
+      let queryLengthFormulas = [];
+      for (let i = 0; i < numRows; i++) {
+        let row = startRow + i;
+        queryLengthFormulas.push([`=(LEN(B${row})-LEN(SUBSTITUTE(B${row}," ","")))+1`]);
+      }
+      sheet.getRange(startRow, lastCol + 1, numRows, 1).setFormulas(queryLengthFormulas);
+      
+      // Word count analysis (categorize by length)
+      let queryLengthCol = String.fromCharCode(64 + lastCol + 1); // Convert to letter (K, L, etc.)
+      let wordCountFormulas = [];
+      for (let i = 0; i < numRows; i++) {
+        let row = startRow + i;
+        wordCountFormulas.push([`=IF(${queryLengthCol}${row}=1,"Single Word",IF(${queryLengthCol}${row}<=3,"Short Tail",IF(${queryLengthCol}${row}<=5,"Mid Tail","Long Tail")))`]);
+      }
+      sheet.getRange(startRow, lastCol + 2, numRows, 1).setFormulas(wordCountFormulas);
+      
+      // Match type count using your exact formula: =COUNTIFS($A:$A;A2)
+      // Search term is in column B, so we use $B:$B;B2
+      let matchTypeFormulas = [];
+      for (let i = 0; i < numRows; i++) {
+        let row = startRow + i;
+        matchTypeFormulas.push([`=COUNTIFS($B:$B,B${row})`]);
+      }
+      sheet.getRange(startRow, lastCol + 3, numRows, 1).setFormulas(matchTypeFormulas);
+      
+      // Overlap check using adapted version of your formula
+      // Original: =IF(AND(COUNTIFS($A:$A;A2;$B:$B;"AI Max")>0;COUNTIFS($A:$A;A2;$B:$B;"<>AI Max")>0);"Overlap";"No Overlap")
+      // Adapted for our structure: check if search term appears with different match types
+      let overlapFormulas = [];
+      for (let i = 0; i < numRows; i++) {
+        let row = startRow + i;
+        overlapFormulas.push([`=IF(COUNTIFS($B:$B,B${row},$C:$C,"<>"&C${row})>0,"Overlap","No Overlap")`]);
+      }
+      sheet.getRange(startRow, lastCol + 4, numRows, 1).setFormulas(overlapFormulas);
+    }
+  }
+}
