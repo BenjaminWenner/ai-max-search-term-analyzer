@@ -1,5 +1,5 @@
 // Enter your Google Sheet URL here between the single quotes
-const SHEET_URL = 'https://docs.google.com/spreadsheets/d/12fS4yM_RppH2h-Ka1yIQKRQYhSdz9OojrN_lrd-etEE/edit';
+const SHEET_URL = '';
 
 // AI Max query
 const AI_MAX_QUERY = `
